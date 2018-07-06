@@ -1,0 +1,26 @@
+version: 1
+formatters:
+  simple:
+    format: '%(asctime)s %(name)s %(levelname)s:%(message)s'
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: DEBUG
+    formatter: simple
+    stream: ext://sys.stdout
+  fileHandler:
+    class: logging.handlers.RotatingFileHandler
+    level: INFO
+    maxBytes: 50000000
+    formatter: simple
+    backupCount: 10
+    filename: dataTrail.log
+    encoding: utf8
+loggers:
+  simpleLogging:
+    level: DEBUG
+    handlers: [fileHandler]
+    propagate: no
+root:
+  level: DEBUG
+  handlers: [fileHandler]
