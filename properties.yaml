@@ -1,0 +1,144 @@
+stores:
+  walmart: 
+    '0054':
+       name: 'springdale'
+       expectedNotificationCount: 60
+       timeZone: '-5:00'
+       robotName: '26'
+    '0894':
+       name: 'memorial'
+       expectedNotificationCount: 38
+       timeZone: '-5:00'
+       robotName: '55'
+    '4615':
+      name: 'glenpool'
+      expectedNotificationCount: 53
+      timeZone: '-5:00'
+      robotName: '19'   
+    '5260':
+      name: 'rogers'
+      expectedNotificationCount: 35
+      timeZone: '-5:00'
+      robotName: '59'
+    '0079':
+      name: 'joplin'
+      expectedNotificationCount: 44
+      timeZone: '-5:00'
+      robotName: '21'
+    '0103':
+      name: 'shawnee'
+      expectedNotificationCount: 40
+      timeZone: '-5:00'
+      robotName: '36'
+    '0590':
+      name: 'fortworth'
+      expectedNotificationCount: 46
+      timeZone: '-5:00'
+      robotName: '51'
+    '0964':
+      name: 'alameda'
+      expectedNotificationCount: 42
+      timeZone: '-6:00'
+      robotName: '11'
+    '1015':
+      name: 'northmesa'
+      expectedNotificationCount: 46
+      timeZone: '-6:00'
+      robotName: '12'
+    '1444':
+      name: 'hutchinson'
+      expectedNotificationCount: 45
+      timeZone: '-4:00'
+      robotName: '16'
+    '1660':
+      name: 'palmdale'
+      expectedNotificationCount: 48
+      timeZone: '-7:00'
+      robotName: '24' 
+    '2119':
+      name: 'milpitas'
+      expectedNotificationCount: 43
+      timeZone: '-7:00'
+      robotName: '29' 
+    '2281':
+      name: 'westmifflin'
+      expectedNotificationCount: 36
+      timeZone: '-4:00'
+      robotName: '19' 
+    '2612':
+      name: 'zaragoza'
+      expectedNotificationCount: 45
+      timeZone: '-6:00'
+      robotName: '7' 
+    '3738':
+      name: 'natrona'
+      expectedNotificationCount: 39
+      timeZone: '-4:00'
+      robotName: '27' 
+    '4509':
+      name: 'benbrook'
+      expectedNotificationCount: 65
+      timeZone: '-5:00'
+      robotName: '23'                           
+components:
+  labels:
+    startColumn: 'D'
+    endColumn: 'G' 
+  topStock:
+    startColumn: 'H'
+    endColumn: 'K'  
+  sectionLabels:
+    startColumn: 'L'
+    endColumn: 'O'  
+  sectionBres:
+    startColumn: 'P'
+    endColumn: 'S'  
+  products:
+    startColumn: 'T'
+    endColumn: 'W'  
+  notification:
+    startColumn: 'X'
+    endColumn: 'AA'    
+pollIntervals:
+  long:
+    days:
+      - 5
+      - 6
+    hours:
+      - 0
+      - 1
+      - 12
+      - 13
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+    interval: 3600
+  normal:
+    interval: 120
+paperTrail:
+  uri: 'https://papertrailapp.com/api/v1/events/search.json'
+  payload:
+    system_id: 
+    limit: 10000
+    tail: 'false'
+    min_id: 0
+    q: ''
+  headers:
+    X-Papertrail-Token: 
+    Content-Type: 'application/json'
+  filterType:
+    processor:
+      min_id: '954300228285153296'
+      max_id: '0'
+      q: ''
+    msg:
+      min_id: '954300228285153296'
+      max_id: '0'
+      q: ''
+spreadSheet:
+  id: ''
+  name: ''
+  sleepTime: 0.3
