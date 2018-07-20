@@ -10,6 +10,11 @@ import traceback
 import pickle
 import os
 
+import shelve
+
+from slackAPI import sendMessage
+
+
 from googleAPI import SpreadSheet
 
 from sets import Set
@@ -29,6 +34,8 @@ class Label(object):
     message_count=0
     update_status=False
     actual_count=0
+    color='white'
+    last_update_time=None
     def __init__(self,name):
         self.name=name
     def set_start_time(self,start_time):
@@ -50,7 +57,7 @@ class Label(object):
     def __str__(self):
         return self.name+','+self.start_time+','+self.end_time+','+str(self.message_count)
     def toArray(self):
-        return [self.get_start_time(),self.get_end_time(),self.message_count,self.actual_count]
+        return ["'"+self.get_start_time(),"'"+self.get_end_time(),+self.message_count,self.actual_count]
     def set_update_status(self,update_status):
         self.update_status=update_status
     def get_update_status(self):
@@ -59,6 +66,33 @@ class Label(object):
         self.actual_count+=count
     def get_acutal_count(self):
         return self.actual_count
+    def set_color(self,color):
+        self.color=color
+    
+    def get_color(self):
+        return self.color
+    
+    def set_last_update_time(self,time):
+        self.last_update_time=time
+        
+    def get_last_update_time(self):
+        return self.last_update_time
+    
+
+def alphbat2numeric(alph):
+    
+    res=0
+    
+    r_alph=alph[::-1].upper()
+    
+    index=0
+    for c in r_alph:
+        res+=alphabat_map[c]*pow(26,index)
+        index+=1
+    
+    
+    return res-1
+
 
 def write2File(result,fileName):
     f=open(fileName,'a')
@@ -88,7 +122,7 @@ def str2Dic(string,delimiter,type_):
             elems=elem.split('=')
             k=elems[0]
             v=elems[1]
-            res[k]=v
+            
             if 'message'==k:
                 if type_=='msg':
                     index1=v.index('api-ext.wal-mart.com')
@@ -119,7 +153,9 @@ def str2Dic(string,delimiter,type_):
                     for s in tmp_arr:
                         ss=s.split(':')
                         res[ss[0].replace('"','')]=ss[1].replace('"','')
-                    
+            elif 'mission_id'==k:
+                v=getMission(v)
+            res[k]=v        
     except:
         logger.warn(traceback.format_exc())     
     return res
@@ -153,6 +189,25 @@ def dateTime2Local(time_str,diff):
     time_obj=datetime.datetime.strptime(time_str,'%Y-%m-%dT%H:%M:%S')
     res=time_obj+datetime.timedelta(minutes=diff)
     return str(res)
+
+def get_tz():
+    
+    offset = time.timezone if (time.localtime().tm_isdst == 0) else time.altzone
+    tmp=offset/-3600
+    h=str(tmp)
+    if tmp>0:
+        h='+'+h
+    tmp= offset%60
+    m=str(tmp)
+    if tmp<10:
+        m='0'+m
+    
+    return h+':'+m
+
+def date_diff(dt1,dt2):
+    dt_format='%Y-%m-%d %H:%M:%S' 
+    return datetime.datetime.strptime(dt1,dt_format)-datetime.datetime.strptime(dt2,dt_format)
+
 
 #the format of the parameter must be (+|-)07:00    
 def timezone2min(tz):
@@ -199,33 +254,26 @@ def getEvents(filters,filter_type,payload):
     try:
         logger.debug('filter type is '+filter_type)
         logger.debug(filters)
+
         payload['q']=filters[filter_type]['q']
-        min_id=filters[filter_type]['min_id']
-        payload['min_id']=min_id
-        max_id=filters[filter_type]['max_id']
-        logger.debug('min_id='+min_id+',max_id='+max_id)
-        if max_id!='0' and max_id>min_id:
-            payload['max_id']=max_id
-        #r=requests.get(uri,params=payload,headers=headers)
-        #json_msg=r.json()
+        if filter_type=='msg':
+            key_max_id='max_id'
+            key_min_id='min_id'
+            filters[filter_type][key_min_id]=filters[filter_type][key_max_id]
+            payload[key_min_id]=filters[filter_type][key_min_id]
+            if  payload.has_key(key_max_id):
+                payload.pop(key_max_id)
+        elif filter_type=='processor':
+            key='min_id'
+            payload[key]=filters['msg'][key]
+            key='max_id'
+            payload[key]=filters['msg'][key]
+            
         #logger.info(r.url)
         #logger.info(r.headers)
         logger.debug(payload)
         r=requests.get(uri,params=payload,headers=headers)
-        #r=requests.post(uri,data=payload,headers=headers)
-        #logger.info(r.url)
-        #logger.info(r.headers)
         json=r.json()
-        #print(json_processor)
-#         events=json['events']
-#         for event in events:
-#             print(event)
-#             event_message=event['message']
-#             event_map=str2Dic(event_message,' | ',filter_type)
-#             for k,v in event_map.iteritems():
-#                 #if k=='label' or k=='zone' or k=='aisle_id' or k=='count':
-#                 if k=='message_id':
-#                     print(k,v)
     except:
         logger.info(traceback.format_exc())
         logger.info('status code is '+str(r.status_code))
@@ -240,16 +288,9 @@ def getEvents(filters,filter_type,payload):
     
     #make sure that the event for processor doesn't exceed the
     #max id of msg, as processor data is based on the msg data 
-    if filter_type=='msg':
-        filters[filter_type]['min_id']=max_id #only change the min_id when it is msg type, processor type has to be changed in main 
-        #filters['processor']['max_id']=max_id
-    
-    if payload.has_key('min_time'):
-        payload.pop('min_time')
-    #pop out max id, as it is not used by all the requests, such as msg type
-    #if some request need to use it, it is set in the try code above 
-    if payload.has_key('max_id'):
-        payload.pop('max_id')
+    filters[filter_type]['max_id']=max_id
+
+
     logger.info('max_id='+max_id)
     logger.info(filter_type+": I get "+str(len(events))+' events')
     for event in events:
@@ -262,7 +303,7 @@ def getEvents(filters,filter_type,payload):
             logger.warning('store '+store_id+' should not committing data to walmart')
             continue
         if not event_map.has_key('label'):
-            logger.warning('no lable found in the event map')
+            logger.warning('no label found in the event map')
             continue
         else:
             label=event_map['label']
@@ -293,11 +334,21 @@ def getEvents(filters,filter_type,payload):
         res['value'].append(event_map)
     return res
  
-def updateLabels(result_list,update_type):
+def updateLabels(result_list,update_type,msg_set):
     global asile_map
     global summary_result
     global store_result
+    now=datetime.datetime.now()
     for event_map in result_list:
+        if update_type=='msg':
+            asile_name=event_map['aisle']
+        elif update_type=='processor':
+            asile_name=event_map['aisle_id']
+            msg_id=event_map['message_id']
+            if msg_id not in msg_set:
+                logger.warning(update_type+':'+msg_id+' not in the set')
+                logger.warning(event_map)
+                continue
         store_id=event_map['store_id']
         generate_time=event_map['generate_time']
         generate_time_only=generate_time[11:19]
@@ -305,10 +356,6 @@ def updateLabels(result_list,update_type):
         mission_id=event_map['mission_id']
         label_name=event_map['label']
         zone_name=event_map['zone']
-        if update_type=='msg':
-            asile_name=event_map['aisle']
-        elif update_type=='processor':
-            asile_name=event_map['aisle_id']
         asile=zone_name+asile_name
         
         #add each asile in the set group by store_id
@@ -325,6 +372,7 @@ def updateLabels(result_list,update_type):
                 summary_label_value=summary_value.get(label_name)
             summary_label_value.increase()
             summary_label_value.set_update_status(True)
+            summary_label_value.set_last_update_time(now)
             min_time=summary_label_value.get_start_time()
             if(min_time is None or min_time>generate_time_only):
                 summary_label_value.set_start_time(generate_time_only)
@@ -371,13 +419,20 @@ def updateLabels(result_list,update_type):
             store_value=store_result.get(store_key)    
             store_label_value=Label(label_name)
             if(not store_value.has_key(label_name)):
-                logger.error('there is no usch label:'+label_name)
+                logger.error('there is no such label:'+label_name)
                 continue
                 
             store_label_value=store_value[label_name]    
             store_label_value.add_actual_count(count)
             store_value[label_name]=store_label_value
             store_result[store_key]=store_value
+
+def translateArr(arr):
+    mission_md5=arr[2]
+    mission_readable=getMission(mission_md5)
+    reable_arr=list(arr)
+    reable_arr[2]=mission_readable
+    return reable_arr
 
 def write2Spreadsheet():
     global summary_result
@@ -388,6 +443,8 @@ def write2Spreadsheet():
     if not sheet_location_cache.has_key(worksheet_name):
         sheet_location_cache[worksheet_name]={}
     row_location_cache=sheet_location_cache[worksheet_name]
+    #now=time.strftime('%Y-%m-%d %H:%M:%S',time.localtime())
+    now=datetime.datetime.now()
     for key in summary_result.keys():
         key_array=key.split(key_delimiter)
         store_id=key_array[1]
@@ -396,11 +453,12 @@ def write2Spreadsheet():
             location=spreadSheet.getLocationByValue(worksheet_name, None,key_array)
             time.sleep(sleep_time)
             if location is None or len(location)==0:
-                #generate the expected data, there are 18 cells between the primary key and the expected result
+                #generate the expected data, there are 24 cells between the primary key and the expected result
                 cell_no=24
                 fill_stuff=[' ']*cell_no
                 fill_stuff.append(expected_notification_count[store_id])
                 fill_stuff.append(store_tz[store_id])
+                logger.info([key_array+fill_stuff])
                 spreadSheet.insert(worksheet_name, 'A4:AB4', [key_array+fill_stuff])
                 location=spreadSheet.getLocationByValue(worksheet_name, None,key_array)
             row_id=location[len(location)-1]
@@ -409,15 +467,36 @@ def write2Spreadsheet():
         label_map=summary_result.get(key)
         for label_name in label_map.keys():
             label=label_map.get(label_name)
-            if not label.get_update_status():
-                logger.debug('No update for key='+key+',label='+label_name)
-                continue
             border=component_border[label_name]
             range_=border[0]+row_id+':'+border[1]+row_id
-            spreadSheet.update('Summary', range_, [label.toArray()])
-            label.set_update_status(False)
-            time.sleep(sleep_time)
+            endRowIndex=int(row_id)
+            if not label.get_update_status():
+                logger.debug('No update for key='+key+',label='+label_name)
+                current_color=label.get_color()
+                logger.info('current color is '+current_color)
+                if current_color=='green':
+                    diff=now-label.get_last_update_time()
+                    logger.debug('diff is '+str(diff))
+                    if diff.days>0 or diff.seconds>color_change_interal:
+                        spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0]), alphbat2numeric(border[1])+1,WHITE)
+                        label.set_color('white')
+                elif current_color=='white':
+                    end_time=label.get_end_time()
+                    if end_time is None:
+                        logger.debug('XXXXXXXXXXXXXXXXXXXXXend_time is None')
+                        spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[1])+1,RED)
+                    elif str(end_time)>warning_latest_time:
+                        spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[0])+2,RED)
+                    label.set_color('red')
+                continue
             logger.info(key+':'+label_name)
+            spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[1])+1,BLUE)
+            spreadSheet.update(worksheet_name, range_, [label.toArray()])
+            time.sleep(sleep_time)
+            spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[1])+1,GREEN)
+            label.set_update_status(False)
+            label.set_color('green')
+            time.sleep(sleep_time)        
     for key in store_result.keys():
         key_array=key.split(key_delimiter)
         store_id=key_array[1]
@@ -448,19 +527,71 @@ def write2Spreadsheet():
                 logger.debug('No update for key='+key+',label='+label_name)
                 continue
             border=component_border[label_name]
-            
+             
             range_=border[0]+row_id+':'+border[1]+row_id
             spreadSheet.update(store_id, range_, [label.toArray()])
             label.set_update_status(False)
             time.sleep(sleep_time)
             logger.info('key='+key+':'+label_name)
-    
+     
+def persistentData():
+    #persist the data in case the application corrupt
+        with open(hidden_file_name,'wb') as hidden_file:
+            protocol=pickle.HIGHEST_PROTOCOL
+            pickle.dump(filters,hidden_file,protocol)
+            pickle.dump(summary_result,hidden_file,protocol)
+            pickle.dump(store_result,hidden_file,protocol)
+            pickle.dump(sheet_location_cache,hidden_file,protocol)
 
+def getMission(md5):
+    data=None
+    global mission_map
+    if mission_map.has_key(md5):
+        return mission_map[md5]
+    else:
+        try:
+            logger.info('I am going to wait for 5 minutes for the file to update,'+md5)
+            time.sleep(5*60) #according to the bryan, the file is updated for every 5 minutes
+            data = shelve.open(mission_file)
+            mission_map=dict(data)
+            if not mission_map.has_key(md5):
+                msg='no value for '+md5
+                logger.warning(msg)
+                #the id is for bryan
+                sendMessage('UB98C31UK', msg,'dataSummary')
+                
+            else:
+                return mission_map[md5]
+        except:
+            logger.error(traceback.format_exc())   
+        finally:
+            try:
+                data.close()
+            except:
+                logger.info('close file error')
+   
+    return md5
 
 config=None
+mission_map=None
 with open('properties.yaml','r') as stream:
     config=yaml.load(stream)
-stream.close()
+
+
+TIMEZONE=get_tz()
+GREEN=[0,128,0]
+WHITE=[255,255,255]
+BLUE=[0,0,255]
+RED=[255,0,0]
+
+mission_file=config['mission']['map_location']
+mission_map={}
+try:
+    data = shelve.open(mission_file)
+    mission_map=dict(data)
+    data.close()
+except:
+    logger.warning('Something wrong with mission map')
 
 poll_intervals=config['pollIntervals']
 poll_interval=poll_intervals['normal']['interval']
@@ -472,6 +603,12 @@ spredSheet_info=config['spreadSheet']
 spreadSheet=SpreadSheet(spredSheet_info['id'],spredSheet_info['name'])
 sleep_time=spredSheet_info['sleepTime']
 walmart_stores=config['stores']['walmart']
+
+alphabat_map=config['alphabet']
+warnings=config['warning']
+warning_latest_time=warnings['latest_time']
+color_change_interal=warnings['color_change_interval']
+
 
 paperTrail_info=config['paperTrail']
 payload=paperTrail_info['payload']
@@ -498,7 +635,7 @@ filter_str+=') INFO "Status Code: 200" ('
 
 index=1
 #used to reduce the number of googleAPI calls
-sheet_location_cache={}#key is the work_sheet id, value is a map{key is the primary key, value is the row number}
+sheet_location_cache={'Summary':{}}#key is the work_sheet id, value is a map{key is the primary key, value is the row number}, summary is not configured, so initialized 
 #key count in the summary result map
 last_count=0
 asile_last_count={}
@@ -527,13 +664,9 @@ filter_processor+=')'
 logger.info(filter_str)
 logger.info(filter_processor)
 
+#overwrite the stored filter 
 filters['processor']['q']=filter_processor
 filters['msg']['q']=filter_str
-
-
-
-
-
 
 
 suffix='.data'
@@ -541,9 +674,7 @@ hidden_file_name='.pickle.bin'
 summary_result={}#key is date_storeNo_mission_id, value is labelMap
 label_map={}#key is the lableName, value is label class
 store_result={}#key is date_storeNo_missionId_aisleNo, value is labelMap
-key_delimiter='_'
-
-
+key_delimiter='$$'
 
 
 if os.path.exists(hidden_file_name):
@@ -552,169 +683,32 @@ if os.path.exists(hidden_file_name):
         summary_result=pickle.load(hidden_file)
         store_result=pickle.load(hidden_file)
         sheet_location_cache=pickle.load(hidden_file)
-#         #need to comment out the following codes, used to support the feature which only use the time instead of timestamp
-#         for key in store_result.keys():
-#             label_map=store_result.get(key)
-#             for label_name in label_map.keys():
-#                 label=label_map.get(label_name)
-#                 label.set_start_time(label.get_start_time()[11:19])
-#                 label.set_end_time(label.get_end_time()[11:19])
-#         for key in summary_result.keys():
-#             label_map=summary_result.get(key)
-#             for label_name in label_map.keys():
-#                 label=label_map.get(label_name)
-#                 label.set_start_time(label.get_start_time()[11:19])
-#                 label.set_end_time(label.get_end_time()[11:19])
     hidden_file.close()
-else:
-    timestamp=datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    min_time=time2Epoch(timestamp)
-    #payload['min_time']=min_time
-    #payload.pop('min_id')
-    #logger.warn('I do not have the result for the last run, using the current time as the start\n You may get incomplete result')
+
+
+
+# #if the configuration want to rewrite the stored value, overwrite it
+# if payload['min_id']!='0':
+#     for key in filters.keys():
+#         filters[key]['min_id']=payload['min_id']
+# if payload['max_id']!='0':
+#     for key in filters.keys():
+#         filters[key]['max_id']=payload['min_id']
 
 
 max_generate_date=getCurrentDate()
 
 
 while True: 
-    filter_type='msg'
-    try:
-        res=getEvents(filters,filter_type,payload)
-    except:
-        logger.info(traceback.format_exc())
-        logger.info('I am going to sleep for '+str(long_poll_interval)+' before next try')
-        time.sleep(long_poll_interval)
-        continue
-    result_list=res['value']
-    #issue: mission run starts later than the earliest configuration of the day, it will try to request paperTrail ASAP and it will exceed paperTrail max try
-    # the following 3 lines is used to fix the issue above
-    if len(result_list)==0:
-        time.sleep(poll_interval)
-        continue
     
-    if max_generate_date<res['max_date']:
-        max_generate_date=res['max_date']
-    updateLabels(result_list, filter_type)
-    msg_set=res['msgs']
-    filter_type='processor'
-    filter_processor='"for header" ('
-    index=1
-    set_len=len(msg_set)
-    logger.info('msgs count is '+str(set_len))
-    min_id=filters[filter_type]['min_id']
-    max_id='z'
-    batch_count=50
-    for msg in msg_set:
-        filter_processor+='message_id='+msg
-        if index!=set_len and index%batch_count!=0 :
-            filter_processor+=' OR '
-        else:
-            filter_processor+=')'
-            filters[filter_type]['q']=filter_processor
-            filters[filter_type]['min_id']=min_id
-            try:
-                res=getEvents(filters,filter_type,payload)
-            except:
-                logger.info(traceback.format_exc())
-                logger.info('I am going to sleep for '+str(long_poll_interval)+' before next try')
-                time.sleep(long_poll_interval)
-                continue
-            result_list=res['value']
-            c_max_id=res['max_id']
-            logger.debug('index is '+str(index)+',return max_id is '+c_max_id)
-            if max_id>c_max_id:
-                max_id=c_max_id
-            updateLabels(result_list, filter_type)
-
-            if batch_count>len(result_list):
-                logger.info("I don't get the data expected, paperTrail doesn't return the expected data")
-            filter_processor='"for header" ('
-        index+=1 
-    logger.info('max_id assigned to '+filter_type+' is '+max_id)
-    filters[filter_type]['min_id']=max_id
-    
-    worksheet_name='Summary'
-    if not sheet_location_cache.has_key(worksheet_name):
-        sheet_location_cache[worksheet_name]={}
-    row_location_cache=sheet_location_cache[worksheet_name]
-    for key in summary_result.keys():
-        key_array=key.split(key_delimiter)
-        store_id=key_array[1]
-        if not row_location_cache.has_key(key):
-            logger.info('no cache for key '+key)
-            location=spreadSheet.getLocationByValue(worksheet_name, None,key_array)
-            time.sleep(sleep_time)
-            if location is None or len(location)==0:
-                #generate the expected data, there are 18 cells between the primary key and the expected result
-                cell_no=24
-                fill_stuff=[' ']*cell_no
-                fill_stuff.append(expected_notification_count[store_id])
-                fill_stuff.append(store_tz[store_id])
-                spreadSheet.insert(worksheet_name, 'A4:AC4', [key_array+fill_stuff])
-                location=spreadSheet.getLocationByValue(worksheet_name, None,key_array)
-            row_id=location[len(location)-1]
-            row_location_cache[key]=row_id
-        row_id=row_location_cache[key]
-        label_map=summary_result.get(key)
-        for label_name in label_map.keys():
-            label=label_map.get(label_name)
-            if not label.get_update_status():
-                logger.debug('No update for key='+key+',label='+label_name)
-                continue
-            border=component_border[label_name]
-            range_=border[0]+row_id+':'+border[1]+row_id
-            spreadSheet.update('Summary', range_, [label.toArray()])
-            label.set_update_status(False)
-            time.sleep(sleep_time)
-            logger.info(key+':'+label_name)
-    for key in store_result.keys():
-        key_array=key.split(key_delimiter)
-        store_id=key_array[1]
-        array_len=len(key_array)
-        key_array[1]=key_array[array_len-1]
-        key_array.pop(array_len-1)#used to find the location of each label
-        label_map=store_result.get(key)
-        worksheet_id=spreadSheet.getIdByName(store_id)
-        if(worksheet_id is None):
-            spreadSheet.cloneWorksheet('Template', store_id)
-            spreadSheet.insert(store_id, 'A4:C4', [key_array])
-        #only query the location when it needs to insert/update data
-        if not sheet_location_cache.has_key(store_id):
-            sheet_location_cache[store_id]={}
-        row_location_cache=sheet_location_cache[store_id]
-        row_key=key_delimiter.join(key_array)
-        if not row_location_cache.has_key(row_key):
-            location=spreadSheet.getLocationByValue(store_id, None,key_array) 
-            if location is None or len(location)==0:
-                spreadSheet.insert(store_id, 'A4:C4', [key_array])
-                location=spreadSheet.getLocationByValue(store_id, None,key_array)
-            row_id=location[len(location)-1]
-            row_location_cache[row_key]=row_id
-        row_id=row_location_cache[row_key]
-        for label_name in label_map.keys():
-            label=label_map.get(label_name)
-            if not label.get_update_status():
-                logger.debug('No update for key='+key+',label='+label_name)
-                continue
-            border=component_border[label_name]
-            
-            range_=border[0]+row_id+':'+border[1]+row_id
-            spreadSheet.update(store_id, range_, [label.toArray()])
-            label.set_update_status(False)
-            time.sleep(sleep_time)
-            logger.info('key='+key+':'+label_name)
-    
-
     #as we don't have any run during the weekend, so the max_generate_date will be less than the current date all the time during weekend,
     #always sleep for the long poll interval during weekend and no need to run the code below it 
     day_of_week=datetime.datetime.today().weekday()
-    if day_of_week in long_poll_days:
+    if day_of_week in long_poll_days: 
         logger.info('I am going to sleep for '+str(long_poll_interval)+'s, see you soon')
         time.sleep(long_poll_interval)
-        continue
-    
-    
+        
+        
     current_date=getCurrentDate()
     #only sleep if the application running date match the event date, otherwise, try as fast as possible to catch up
     if(max_generate_date==current_date):
@@ -727,33 +721,29 @@ while True:
             if key[0:10]<current_date:
                 logger.debug('pop out '+key)
                 store_result.pop(key)
-        
         current_count=len(summary_result)
         if current_count!=last_count:
             #sort the worksheet by the 3 column(start from 0)
+            worksheet_name='Summary'
+            #sort based on the date and the timestamp of 1st message of label
             spreadSheet.sort(worksheet_name, 2, 5000, 0, 50, [(0,1),(3,1)])
             last_count=current_count
-            sheet_location_cache['Summary'].clear()
-            logger.info('summary sorted')
+            sheet_location_cache[worksheet_name].clear()
+            logger.info(worksheet_name+' sorted')
         
         
         for store_id in asile_map.keys():
             current_count=len(asile_map.get(store_id))
             if current_count!=asile_last_count[store_id]:
                 asile_last_count[store_id]=current_count
-                spreadSheet.sort(store_id, 2, 5000, 0, 50, [(0,1),(3,1)])
+                #sort based on the date and the mission id and the ts of 1st message of label, as label may not generated for the aisle
+                spreadSheet.sort(store_id, 2, 5000, 0, 50, [(0,1),(2,1),(3,1)])
                 sheet_location_cache[store_id].clear()
                 logger.info(store_id +' sorted')
         
-        #persist the data in case the application corrupt
-        with open(hidden_file_name,'wb') as hidden_file:
-            protocol=pickle.HIGHEST_PROTOCOL
-            pickle.dump(filters,hidden_file,protocol)
-            pickle.dump(summary_result,hidden_file,protocol)
-            pickle.dump(store_result,hidden_file,protocol)
-            pickle.dump(sheet_location_cache,hidden_file,protocol)
-            hidden_file.close()
-            
+        #persist the data before sleeping
+        persistentData()   
+        
         current_hour=datetime.datetime.now().hour      
         if current_hour in long_poll_hours:
             logger.info('I am going to sleep for '+str(long_poll_interval)+'s, see you soon')
@@ -761,6 +751,67 @@ while True:
         else:
             logger.info('I am going to sleep for '+str(poll_interval)+'s, see you soon')
             time.sleep(poll_interval)
+
+
+   
+    filter_type='msg'
+    try:
+        res=getEvents(filters,filter_type,payload)
+    except:
+        logger.info(traceback.format_exc())
+        logger.info('I am going to sleep for '+str(long_poll_interval)+' before next try')
+        time.sleep(long_poll_interval)
+        continue
+    result_list=res['value']
+    
+    
+    if len(result_list)==0:
+        continue# it needs to be here, as the processor request may get data earlier than the msg request
+    
+    if max_generate_date<res['max_date']:
+        max_generate_date=res['max_date']
+    updateLabels(result_list, filter_type,None)
+    
+    
+    logger.debug('after msg request and before the processor request')
+    logger.debug(filters)
+    
+    msg_set=res['msgs']
+    set_len=len(msg_set)
+    logger.info('msgs count is '+str(set_len))
+    filter_type='processor'
+    
+    try:
+        res=getEvents(filters,filter_type,payload)
+    except:
+        logger.info(traceback.format_exc())
+        logger.info('I am going to sleep for '+str(long_poll_interval)+' before next try')
+        time.sleep(long_poll_interval)
+        continue
+    result_list=res['value']
+    updateLabels(result_list, filter_type,msg_set)
+    
+    #add the components which are not generated
+    for pkey in summary_result.keys():
+        label_map=summary_result.get(pkey)
+        for component in components.keys():
+            if component not in label_map.keys():
+                label=Label(component)
+                label_map[component]=label
+        
+        
+    for pkey in store_result.keys():
+        label_map=store_result.get(pkey)
+        for component in components.keys():
+            if component not in label_map.keys():
+                label=Label(component)
+                label_map[component]=label
+    
+    
+    #push data to google sheet
+    write2Spreadsheet()
+  
+    
 
 
 

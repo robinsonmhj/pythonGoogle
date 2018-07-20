@@ -93,12 +93,15 @@ class SpreadSheet(object):
 
   # the type of value is a list
   def insert(self, workSheetName, range_, value):
-  	valueInputOption = 'RAW'
-  	insertDataOption = 'INSERT_ROWS'
-  	range_ = workSheetName + '!' + range_
-  	body = {"range":range_, "values":value}
-  	request = self.spreadsheet.values().append(spreadsheetId=self.id, range=range_, valueInputOption=valueInputOption, insertDataOption=insertDataOption, body=body)
-  	response = request.execute()
+    valueInputOption = 'RAW'
+    insertDataOption = 'INSERT_ROWS'
+    range_ = workSheetName + '!' + range_
+    body = {"range":range_, "values":value}
+    request = self.spreadsheet.values().append(spreadsheetId=self.id, range=range_, valueInputOption=valueInputOption, insertDataOption=insertDataOption, body=body)
+    try:
+      response = request.execute()
+    except:
+      self.logger(traceback.format_exc())
 
   def update(self, worksheetName, range_, value):
 
@@ -191,9 +194,101 @@ class SpreadSheet(object):
   		response = request.execute()
   	except:
   		self.logger.error(traceback.format_exc())
-  	
-
-
+ 
+  #startRowIndex and startColumnIndex are included, endRowIndex and endColumnIndex are excluded
+  #color is an array which contains RGB color, the value is from 0 to 255
+  #white:255,255,255 green:0,128,0 red:255,0,0
+  #fields explanation:https://developers.googleblog.com/2017/04/using-field-masks-with-update-requests.html
+  #example https://developers.google.com/sheets/api/samples/formatting
+  #watch out, when you call this method, make sure that you don't have any format pattern for the range, it will set the format pattern to automatic
+  def format_cell(self,worksheetName,startRowIndex,endRowIndex,startColumnIndex,endColumnIndex,color):
+    worksheetId = self.getIdByName(worksheetName)
+    base=255.0
+#       body={
+#   "requests": [
+#     {
+#       "repeatCell": {
+#         "cell": {
+#           "userEnteredFormat": {
+#             "backgroundColor": {
+#               "red": color[0]/base,
+#               "alpha": 1.0,
+#               "blue": color[2]/base,
+#               "green": color[1]/base
+#             },
+#             "numberFormat": {
+#               "type": "TIME",
+#               "pattern": "hh:mm:ss"
+#             }
+#           }
+#         },
+#         "range": {
+#           "endColumnIndex": endColumnIndex,
+#           "sheetId": worksheetId,
+#           "startColumnIndex": startColumnIndex,
+#           "startRowIndex": startRowIndex,
+#           "endRowIndex": endRowIndex
+#         },
+#         "fields": "userEnteredFormat"
+#       },
+#       "repeatCell": {
+#         "cell": {
+#           "userEnteredFormat": {
+#             "backgroundColor": {
+#               "red": color[0]/base,
+#               "alpha": 1.0,
+#               "blue": color[2]/base,
+#               "green": color[1]/base
+#             },
+#             "numberFormat": {
+#               "type": "NUMBER",
+#               "pattern": "###"
+#             }
+#           }
+#         },
+#         "range": {
+#           "endColumnIndex": endColumnIndex,
+#           "sheetId": worksheetId,
+#           "startColumnIndex": startColumnIndex,
+#           "startRowIndex": startRowIndex,
+#           "endRowIndex": endRowIndex
+#         },
+#         "fields": "userEnteredFormat"
+#       }
+#     }
+#   ]
+# }
+    body={
+  "requests": [
+    {
+      "repeatCell": {
+        "cell": {
+          "userEnteredFormat": {
+            "backgroundColor": {
+              "red": color[0]/base,
+              "alpha": 1.0,
+              "blue": color[2]/base,
+              "green": color[1]/base
+            }
+          }
+        },
+        "range": {
+          "endColumnIndex": endColumnIndex,
+          "sheetId": worksheetId,
+          "startColumnIndex": startColumnIndex,
+          "startRowIndex": startRowIndex,
+          "endRowIndex": endRowIndex
+        },
+        "fields": "userEnteredFormat"
+      }
+    }
+  ]
+}
+    request = self.spreadsheet.batchUpdate(spreadsheetId=self.id, body=body)
+    try:
+        response = request.execute()
+    except:
+        self.logger.error(traceback.format_exc())
 
 class GoogleDrive:
   files = None
@@ -259,11 +354,17 @@ class GoogleDrive:
 		  self.logger.error(traceback.format_exc())
 
 if __name__=='__main__':
-	with open('logging.yaml','rt') as f:
-		conf=yaml.safe_load(f.read())
-	logging.config.dictConfig(conf)
-	logger=logging.getLogger('hahaha')
-	spread_id='11iStKbsyVTtrWSYKDi3ZTULofcIqmfTBvf2n95_sqX0'
-	logger.info('hello I am in the main')
-	spread=SpreadSheet(spread_id,None)
-	spread.sort('TestSummary', 2, 1000, 0, 25, [(3,0)])
+    with open('logging.yaml','rt') as f:
+        conf=yaml.safe_load(f.read())
+    logging.config.dictConfig(conf)
+    logger=logging.getLogger('hahaha')
+    spread_id='1WxHR5ybOrBXyI8KWG2x6R5FvN8mOsLfJcUBarkzMOWM'
+    logger.info('hello I am in the main')
+    #drive=GoogleDrive()
+    #drive.getFileListByName('')
+    spread=SpreadSheet(spread_id,None)
+    #white:255,255,255 green:0,128,0 red:255,0,0
+    color=[255,0,0]#rgb
+    spread.format_cell('Summary', 3, 4, 3, 7, color)
+    color=[255,255,255]
+    spread.format_cell('Summary', 3, 4, 3, 7, color)
