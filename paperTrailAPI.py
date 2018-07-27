@@ -15,7 +15,7 @@ import shelve
 from slackAPI import sendMessage
 
 
-from googleAPI import SpreadSheet
+from googleAPI import SpreadSheet, GoogleDrive
 
 from sets import Set
 from __builtin__ import str
@@ -284,8 +284,13 @@ def getEvents(filters,filter_type,payload):
     events=json['events']
     max_id=json['max_id']
     res['max_id']=max_id
-    
-    
+    if len(events)==0:
+        logger.debug(json)
+        if json.has_key('min_time_at'):
+            res['max_date']=json['min_time_at'][0:10]
+        elif json.has_key('max_time_at'):
+            res['max_date']=json['max_time_at'][0:10]
+
     #make sure that the event for processor doesn't exceed the
     #max id of msg, as processor data is based on the msg data 
     filters[filter_type]['max_id']=max_id
@@ -314,14 +319,26 @@ def getEvents(filters,filter_type,payload):
         log_tz=generated_time[-6:]
         log_min=timezone2min(log_tz)
         local_tz=walmart_stores[store_id]['timeZone']
+        utc='+00:00'
+        
+        utc_min=timezone2min(utc)
+        
+        diff=utc_min-log_min
+        utc_time=dateTime2Local(generated_time[0:19],diff)
+        event_map['utc_time']=utc_time
+        
         local_min=timezone2min(local_tz)
         diff=local_min-log_min
         generated_time=dateTime2Local(generated_time[0:19], diff)
+        
+        
+       
         #logger.info('localTime='+generated_time+',tz is '+local_tz)
         generate_date=generated_time[0:10]
         if(res['max_date'] is None or res['max_date']>max_generate_date):
             res['max_date']=generate_date
         event_map['generate_time']=generated_time
+        #the code is for counting
         if len(event_map)<13:
             logger.info('bad event below:')
             logger.info(event)
@@ -333,8 +350,33 @@ def getEvents(filters,filter_type,payload):
         res['msgs'].add(msg_id)
         res['value'].append(event_map)
     return res
- 
-def updateLabels(result_list,update_type,msg_set):
+
+def get_count_by_date_hour(result_list,type,msg_set_array):
+    
+    global count_map_by_date
+    
+    for event_map in result_list:
+        if msg_set_array is not None and len(msg_set_array)>1:
+            msg_id=event_map['message_id']
+            if  msg_id not in msg_set_array[0] and msg_id not in msg_set_array[1]:
+                continue
+        label_name=event_map['label']
+        if (type =='msg' and label_name=='notification') or (type =='processor' and label_name=='products') :
+            date=event_map['utc_time'][0:10]
+            hour=event_map['utc_time'][11:13]
+            store_id=event_map['store_id']
+            key=date+':'+hour+':'+store_id
+            logger.debug(event_map['utc_time']+'----'+event_map['generate_time']+',timezone:'+walmart_stores[event_map['store_id']]['timeZone'])
+            if type =='msg':
+                count=1
+            elif type=='processor':
+                count=event_map['count']
+            if not count_map_by_date[label_name].has_key(key):
+                count_map_by_date[label_name][key]=0
+            count_map_by_date[label_name][key]+=count
+
+
+def updateLabels(result_list,update_type,msg_set_array):
     global asile_map
     global summary_result
     global store_result
@@ -345,7 +387,7 @@ def updateLabels(result_list,update_type,msg_set):
         elif update_type=='processor':
             asile_name=event_map['aisle_id']
             msg_id=event_map['message_id']
-            if msg_id not in msg_set:
+            if msg_id not in msg_set_array[0] and msg_id not in msg_set_array[1]:
                 logger.warning(update_type+':'+msg_id+' not in the set')
                 logger.warning(event_map)
                 continue
@@ -405,7 +447,7 @@ def updateLabels(result_list,update_type,msg_set):
                 continue
             summary_value=summary_result.get(summary_key)
             if(not summary_value.has_key(label_name)):
-                logger.error('there is no such label:'+label_name)
+                logger.error('there is no such label:'+label_name+',key is '+summary_key)
                 continue  
             summary_label_value=summary_value.get(label_name)
             count=event_map['count']
@@ -426,6 +468,8 @@ def updateLabels(result_list,update_type,msg_set):
             store_label_value.add_actual_count(count)
             store_value[label_name]=store_label_value
             store_result[store_key]=store_value
+    
+
 
 def translateArr(arr):
     mission_md5=arr[2]
@@ -451,16 +495,19 @@ def write2Spreadsheet():
         if not row_location_cache.has_key(key):
             logger.info('no cache for key '+key)
             location=spreadSheet.getLocationByValue(worksheet_name, None,key_array)
-            time.sleep(sleep_time)
             if location is None or len(location)==0:
                 #generate the expected data, there are 24 cells between the primary key and the expected result
                 cell_no=24
                 fill_stuff=[' ']*cell_no
                 fill_stuff.append(expected_notification_count[store_id])
                 fill_stuff.append(store_tz[store_id])
-                logger.info([key_array+fill_stuff])
-                spreadSheet.insert(worksheet_name, 'A4:AB4', [key_array+fill_stuff])
+                logger.debug([key_array+fill_stuff])
+                spreadSheet.insert(worksheet_name, 'A4:C4', [key_array+fill_stuff])
                 location=spreadSheet.getLocationByValue(worksheet_name, None,key_array)
+            if location is None:
+                logger.error('try 2 times but not able to get the location, not push it this time')
+                logger.error(key_array)
+                continue
             row_id=location[len(location)-1]
             row_location_cache[key]=row_id
         row_id=row_location_cache[key]
@@ -473,7 +520,7 @@ def write2Spreadsheet():
             if not label.get_update_status():
                 logger.debug('No update for key='+key+',label='+label_name)
                 current_color=label.get_color()
-                logger.info('current color is '+current_color)
+                logger.debug('current color is '+current_color)
                 if current_color=='green':
                     diff=now-label.get_last_update_time()
                     logger.debug('diff is '+str(diff))
@@ -491,10 +538,10 @@ def write2Spreadsheet():
                 continue
             logger.info(key+':'+label_name)
             spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[1])+1,BLUE)
-            spreadSheet.update(worksheet_name, range_, [label.toArray()])
+            status=spreadSheet.update(worksheet_name, range_, [label.toArray()])
             time.sleep(sleep_time)
             spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[1])+1,GREEN)
-            label.set_update_status(False)
+            label.set_update_status(not status)
             label.set_color('green')
             time.sleep(sleep_time)        
     for key in store_result.keys():
@@ -515,9 +562,14 @@ def write2Spreadsheet():
         row_key=key_delimiter.join(key_array)
         if not row_location_cache.has_key(row_key):
             location=spreadSheet.getLocationByValue(store_id, None,key_array) 
+            time.sleep(sleep_time)
             if location is None or len(location)==0:
                 spreadSheet.insert(store_id, 'A4:C4', [key_array])
                 location=spreadSheet.getLocationByValue(store_id, None,key_array)
+            if location is None:
+                logger.error('try 2 times but not able to get the location, not push it this time')
+                logger.error(key_array)
+                continue
             row_id=location[len(location)-1]
             row_location_cache[row_key]=row_id
         row_id=row_location_cache[row_key]
@@ -526,11 +578,10 @@ def write2Spreadsheet():
             if not label.get_update_status():
                 logger.debug('No update for key='+key+',label='+label_name)
                 continue
-            border=component_border[label_name]
-             
+            border=component_border[label_name] 
             range_=border[0]+row_id+':'+border[1]+row_id
-            spreadSheet.update(store_id, range_, [label.toArray()])
-            label.set_update_status(False)
+            status=spreadSheet.update(store_id, range_, [label.toArray()])
+            label.set_update_status(not status)
             time.sleep(sleep_time)
             logger.info('key='+key+':'+label_name)
      
@@ -542,16 +593,28 @@ def persistentData():
             pickle.dump(summary_result,hidden_file,protocol)
             pickle.dump(store_result,hidden_file,protocol)
             pickle.dump(sheet_location_cache,hidden_file,protocol)
+            pickle.dump(msg_set_array,hidden_file,protocol)
 
 def getMission(md5):
     data=None
     global mission_map
+    global missing_missions
     if mission_map.has_key(md5):
         return mission_map[md5]
     else:
+        if missing_missions.has_key(md5) and missing_missions[md5]['count']>1:  
+            if not missing_missions[md5]['sent']:
+                msg='I wait for 10 minutes for the mission:'+md5+' to be translated, but does not get any data, escape it'
+                logger.warning(msg)
+                sendMessage('UAXPHET5H', msg,'dataSummary')
+                missing_missions[md5]['sent']=True  
+            return md5
+        elif not missing_missions.has_key(md5):
+            missing_missions[md5]={'count':0,'sent':False}
+        missing_missions[md5]['count']+=1
+        logger.info('I am going to wait for 5 minutes for the file to update,'+md5)
+        time.sleep(5*60) #according to the bryan, the file is updated for every 5 minutes
         try:
-            logger.info('I am going to wait for 5 minutes for the file to update,'+md5)
-            time.sleep(5*60) #according to the bryan, the file is updated for every 5 minutes
             data = shelve.open(mission_file)
             mission_map=dict(data)
             if not mission_map.has_key(md5):
@@ -559,7 +622,6 @@ def getMission(md5):
                 logger.warning(msg)
                 #the id is for bryan
                 sendMessage('UB98C31UK', msg,'dataSummary')
-                
             else:
                 return mission_map[md5]
         except:
@@ -572,6 +634,58 @@ def getMission(md5):
    
     return md5
 
+def merge_tabs():
+    with open(csv_file_name,'w') as f:
+        worksheets=spreadSheet.getWorksheets()
+        first=True
+        for worksheet_name in worksheets.values():
+            if worksheet_name!='Summary' and worksheet_name!='Template':
+                logger.info('writing '+worksheet_name)
+                rows=spreadSheet.getDataByWorksheetName(worksheet_name)
+                if first:
+                    tmp=['store_id']+rows[0]
+                    rows[0]=tmp
+                    tmp=['']+rows[1]
+                    rows[1]=tmp
+                else:
+                    rows=rows[2:]
+                count=0
+                for row in rows:
+                    row_str=','.join(row)
+                    if (first and count!=0 and count!=1) or not first:
+                        row_str=worksheet_name+','+row_str
+                    f.write(row_str+'\n')
+                    count+=1
+                first=False
+                logger.info(worksheet_name+' has '+str(count)+' rows')
+    
+    mime_type='text/csv'
+    file_list=drive.getFileListByName(csv_file_name,mime_type)
+    logger.info('start uploading/updating the file')
+    if len(file_list)==0:
+        file_id=drive.upload(csv_file_name,csv_file_name,mime_type,None)
+        drive.shareFile('domain','reader','bossanova.com',file_id)
+        logger.info('It seems that there is no such file, using new file id '+file_id)
+    else:
+        file_id=drive.updateContent(csv_file_id,csv_file_name)
+    logger.info('finished uploading/updating the file')
+
+##Don't use it, it is not fully implemeted and tested yet
+def rollover():
+    global spreadSheet
+    
+    #code to make a copy of the spreadsheet and move it to team driv
+    
+    
+    #remove worksheet for store and clear the content for summary
+    worksheets=spreadSheet.getWorksheets()
+    for worksheet_name in worksheets.values():
+        if worksheet_name!='Summary' and worksheet_name!='Template':
+            spreadSheet.deleteWorksheet(worksheet_name) 
+        elif worksheet_name=='Summary':
+            spreadSheet.clearWorksheet(worksheet_name, 'A3:Z')
+
+
 config=None
 mission_map=None
 with open('properties.yaml','r') as stream:
@@ -579,10 +693,15 @@ with open('properties.yaml','r') as stream:
 
 
 TIMEZONE=get_tz()
-GREEN=[0,128,0]
+GREEN=[204,245,204]
 WHITE=[255,255,255]
 BLUE=[0,0,255]
-RED=[255,0,0]
+RED=[228,150,200]#it is light magenta
+
+
+count_map_by_date={'products':{},'notification':{}}
+
+missing_missions={}
 
 mission_file=config['mission']['map_location']
 mission_map={}
@@ -603,11 +722,16 @@ spredSheet_info=config['spreadSheet']
 spreadSheet=SpreadSheet(spredSheet_info['id'],spredSheet_info['name'])
 sleep_time=spredSheet_info['sleepTime']
 walmart_stores=config['stores']['walmart']
+drive=GoogleDrive()
 
 alphabat_map=config['alphabet']
 warnings=config['warning']
 warning_latest_time=warnings['latest_time']
 color_change_interal=warnings['color_change_interval']
+
+csv_info=config['csv']
+csv_file_id=csv_info['id']
+csv_file_name=csv_info['name']
 
 
 paperTrail_info=config['paperTrail']
@@ -675,7 +799,7 @@ summary_result={}#key is date_storeNo_mission_id, value is labelMap
 label_map={}#key is the lableName, value is label class
 store_result={}#key is date_storeNo_missionId_aisleNo, value is labelMap
 key_delimiter='$$'
-
+msg_set_array=[Set(),Set()]
 
 if os.path.exists(hidden_file_name):
     with open(hidden_file_name,'rb') as hidden_file:
@@ -683,21 +807,18 @@ if os.path.exists(hidden_file_name):
         summary_result=pickle.load(hidden_file)
         store_result=pickle.load(hidden_file)
         sheet_location_cache=pickle.load(hidden_file)
+        try:
+            msg_set_array=pickle.load(hidden_file)
+        except:
+            logger.info('it seems that there is no such array in the pickle file')
     hidden_file.close()
 
 
 
-# #if the configuration want to rewrite the stored value, overwrite it
-# if payload['min_id']!='0':
-#     for key in filters.keys():
-#         filters[key]['min_id']=payload['min_id']
-# if payload['max_id']!='0':
-#     for key in filters.keys():
-#         filters[key]['max_id']=payload['min_id']
-
-
 max_generate_date=getCurrentDate()
 
+
+run_no=0
 
 while True: 
     
@@ -753,7 +874,7 @@ while True:
             time.sleep(poll_interval)
 
 
-   
+    
     filter_type='msg'
     try:
         res=getEvents(filters,filter_type,payload)
@@ -763,24 +884,25 @@ while True:
         time.sleep(long_poll_interval)
         continue
     result_list=res['value']
-    
-    
-    if len(result_list)==0:
-        continue# it needs to be here, as the processor request may get data earlier than the msg request
-    
+     
     if max_generate_date<res['max_date']:
         max_generate_date=res['max_date']
+     
+     
     updateLabels(result_list, filter_type,None)
-    
-    
+     
+    #get_count_by_date_hour(result_list,filter_type,None)
+     
     logger.debug('after msg request and before the processor request')
     logger.debug(filters)
     
-    msg_set=res['msgs']
-    set_len=len(msg_set)
-    logger.info('msgs count is '+str(set_len))
+    remainder=run_no%2
+    quotient=run_no/2
+    msg_set_array[remainder]=res['msgs']
+    set_len=len(msg_set_array[remainder])
+    logger.info('unique msg count is '+str(set_len)+',previous one is '+str(len(msg_set_array[quotient]))+',run no is '+str(run_no))
     filter_type='processor'
-    
+     
     try:
         res=getEvents(filters,filter_type,payload)
     except:
@@ -789,8 +911,21 @@ while True:
         time.sleep(long_poll_interval)
         continue
     result_list=res['value']
-    updateLabels(result_list, filter_type,msg_set)
+     
+    updateLabels(result_list, filter_type,msg_set_array)
     
+    #get_count_by_date_hour(result_list,filter_type,msg_set)
+    
+#     with open('rick_data.txt','w+') as f:
+#     
+#         for component in count_map_by_date.keys():
+#             f.write('=================='+component+'===============================\n')
+#             date_map=count_map_by_date[component]
+#             for key,value in date_map.iteritems():
+#                 f.write(key+':'+str(value)+'\n')
+                
+            
+     
     #add the components which are not generated
     for pkey in summary_result.keys():
         label_map=summary_result.get(pkey)
@@ -798,18 +933,21 @@ while True:
             if component not in label_map.keys():
                 label=Label(component)
                 label_map[component]=label
-        
-        
+           
+           
     for pkey in store_result.keys():
         label_map=store_result.get(pkey)
         for component in components.keys():
             if component not in label_map.keys():
                 label=Label(component)
                 label_map[component]=label
-    
-    
+      
+      
     #push data to google sheet
     write2Spreadsheet()
+    #merge all the data together and upload to google drive
+    merge_tabs()
+    run_no+=1
   
     
 

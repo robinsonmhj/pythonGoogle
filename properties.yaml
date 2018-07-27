@@ -175,3 +175,6 @@ alphabet:
 warning:
   latest_time: '16:00:00'
   color_change_interval: 900
+csv:
+  id: '15G2g21N3mKyYbwFmHK1ge8c3dIkTPkHU'
+  name: 'dataSummary.csv'
