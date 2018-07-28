@@ -478,7 +478,7 @@ def translateArr(arr):
     reable_arr[2]=mission_readable
     return reable_arr
 
-def write2Spreadsheet():
+def write2Spreadsheet(skip_tab):
     global summary_result
     global store_result
     global sheet_location_cache
@@ -543,47 +543,48 @@ def write2Spreadsheet():
             spreadSheet.format_cell(worksheet_name, endRowIndex-1, endRowIndex, alphbat2numeric(border[0])+1, alphbat2numeric(border[1])+1,GREEN)
             label.set_update_status(not status)
             label.set_color('green')
-            time.sleep(sleep_time)        
-    for key in store_result.keys():
-        key_array=key.split(key_delimiter)
-        store_id=key_array[1]
-        array_len=len(key_array)
-        key_array[1]=key_array[array_len-1]
-        key_array.pop(array_len-1)#used to find the location of each label
-        label_map=store_result.get(key)
-        worksheet_id=spreadSheet.getIdByName(store_id)
-        if(worksheet_id is None):
-            spreadSheet.cloneWorksheet('Template', store_id)
-            spreadSheet.insert(store_id, 'A4:C4', [key_array])
-        #only query the location when it needs to insert/update data
-        if not sheet_location_cache.has_key(store_id):
-            sheet_location_cache[store_id]={}
-        row_location_cache=sheet_location_cache[store_id]
-        row_key=key_delimiter.join(key_array)
-        if not row_location_cache.has_key(row_key):
-            location=spreadSheet.getLocationByValue(store_id, None,key_array) 
-            time.sleep(sleep_time)
-            if location is None or len(location)==0:
+            time.sleep(sleep_time) 
+    if not skip_tab:     
+        for key in store_result.keys():
+            key_array=key.split(key_delimiter)
+            store_id=key_array[1]
+            array_len=len(key_array)
+            key_array[1]=key_array[array_len-1]
+            key_array.pop(array_len-1)#used to find the location of each label
+            label_map=store_result.get(key)
+            worksheet_id=spreadSheet.getIdByName(store_id)
+            if(worksheet_id is None):
+                spreadSheet.cloneWorksheet('Template', store_id)
                 spreadSheet.insert(store_id, 'A4:C4', [key_array])
-                location=spreadSheet.getLocationByValue(store_id, None,key_array)
-            if location is None:
-                logger.error('try 2 times but not able to get the location, not push it this time')
-                logger.error(key_array)
-                continue
-            row_id=location[len(location)-1]
-            row_location_cache[row_key]=row_id
-        row_id=row_location_cache[row_key]
-        for label_name in label_map.keys():
-            label=label_map.get(label_name)
-            if not label.get_update_status():
-                logger.debug('No update for key='+key+',label='+label_name)
-                continue
-            border=component_border[label_name] 
-            range_=border[0]+row_id+':'+border[1]+row_id
-            status=spreadSheet.update(store_id, range_, [label.toArray()])
-            label.set_update_status(not status)
-            time.sleep(sleep_time)
-            logger.info('key='+key+':'+label_name)
+                #only query the location when it needs to insert/update data
+                if not sheet_location_cache.has_key(store_id):
+                    sheet_location_cache[store_id]={}
+            row_location_cache=sheet_location_cache[store_id]
+            row_key=key_delimiter.join(key_array)
+            if not row_location_cache.has_key(row_key):
+                location=spreadSheet.getLocationByValue(store_id, None,key_array) 
+                time.sleep(sleep_time)
+                if location is None or len(location)==0:
+                    spreadSheet.insert(store_id, 'A4:C4', [key_array])
+                    location=spreadSheet.getLocationByValue(store_id, None,key_array)
+                if location is None:
+                    logger.error('try 2 times but not able to get the location, not push it this time')
+                    logger.error(key_array)
+                    continue
+                row_id=location[len(location)-1]
+                row_location_cache[row_key]=row_id
+            row_id=row_location_cache[row_key]
+            for label_name in label_map.keys():
+                label=label_map.get(label_name)
+                if not label.get_update_status():
+                    logger.debug('No update for key='+key+',label='+label_name)
+                    continue
+                border=component_border[label_name] 
+                range_=border[0]+row_id+':'+border[1]+row_id
+                status=spreadSheet.update(store_id, range_, [label.toArray()])
+                label.set_update_status(not status)
+                time.sleep(sleep_time)
+                logger.info('key='+key+':'+label_name)
      
 def persistentData():
     #persist the data in case the application corrupt
@@ -665,7 +666,10 @@ def merge_tabs():
     if len(file_list)==0:
         file_id=drive.upload(csv_file_name,csv_file_name,mime_type,None)
         drive.shareFile('domain','reader','bossanova.com',file_id)
-        logger.info('It seems that there is no such file, using new file id '+file_id)
+        msg='It seems that there is no such file, using new file id '
+        if file_id is not None:
+            msg+=file_id
+        logger.info(msg)
     else:
         file_id=drive.updateContent(csv_file_id,csv_file_name)
     logger.info('finished uploading/updating the file')
@@ -888,7 +892,7 @@ while True:
     if max_generate_date<res['max_date']:
         max_generate_date=res['max_date']
      
-     
+    msg_count=len(result_list)
     updateLabels(result_list, filter_type,None)
      
     #get_count_by_date_hour(result_list,filter_type,None)
@@ -897,10 +901,11 @@ while True:
     logger.debug(filters)
     
     remainder=run_no%2
-    quotient=run_no/2
+    quotient=1-remainder
     msg_set_array[remainder]=res['msgs']
-    set_len=len(msg_set_array[remainder])
-    logger.info('unique msg count is '+str(set_len)+',previous one is '+str(len(msg_set_array[quotient]))+',run no is '+str(run_no))
+    current_set_len=len(msg_set_array[remainder])
+    pre_set_len=len(msg_set_array[quotient])
+    logger.info('unique msg count is '+str(current_set_len)+',previous one is '+str(pre_set_len)+',run no is '+str(run_no))
     filter_type='processor'
      
     try:
@@ -911,7 +916,7 @@ while True:
         time.sleep(long_poll_interval)
         continue
     result_list=res['value']
-     
+    processor_count=len(result_list)
     updateLabels(result_list, filter_type,msg_set_array)
     
     #get_count_by_date_hour(result_list,filter_type,msg_set)
@@ -942,11 +947,14 @@ while True:
                 label=Label(component)
                 label_map[component]=label
       
-      
+    skip_tab=False
+    if msg_count==0 or processor_count==0:
+        skip_tab=True
     #push data to google sheet
-    write2Spreadsheet()
+    write2Spreadsheet(skip_tab)
     #merge all the data together and upload to google drive
-    merge_tabs()
+    if not (msg_count==0 and processor_count==0):
+        merge_tabs()
     run_no+=1
   
     
