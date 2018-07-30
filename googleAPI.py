@@ -44,7 +44,7 @@ class SpreadSheet(object):
             values = result.get('values', [])
             return values
         except:
-            self.logger(traceback.format_exc())
+            self.logger.info(traceback.format_exc())
     
     
     # the value returned is an offset based on your range_, if you want the absoluate location, always passed range from A1
@@ -87,7 +87,7 @@ class SpreadSheet(object):
             request.execute()
             self.worksheets[worksheetId] = newName
         except:
-            self.logger(traceback.format_exc())
+            self.logger.info(traceback.format_exc())
         
 
     def addWorksheet(self, name):
@@ -96,7 +96,7 @@ class SpreadSheet(object):
         try:
             request.execute()
         except:
-            self.logger(traceback.format_exc())
+            self.logger.info(traceback.format_exc())
 
     def deleteWorksheet(self,name):
         worksheetId = self.getIdByName(name)
@@ -109,7 +109,7 @@ class SpreadSheet(object):
             request.execute()
             self.worksheets.pop(worksheetId)
         except:
-            self.logger(traceback.format_exc())
+            self.logger.info(traceback.format_exc())
         
         
         
@@ -124,7 +124,7 @@ class SpreadSheet(object):
             response=request.execute()
             return response["spreadsheetId"]
         except:
-            self.logger(traceback.format_exc())  # json object instead of a json string
+            self.logger.info(traceback.format_exc())  # json object instead of a json string
         
 
     # the type of value is a list
@@ -138,7 +138,7 @@ class SpreadSheet(object):
             request.execute()
             return True
         except:
-            self.logger(traceback.format_exc())
+            self.logger.info(traceback.format_exc())
         
         return False
 
@@ -150,7 +150,7 @@ class SpreadSheet(object):
             request.execute()
             return True
         except:
-            self.logger(traceback.format_exc())
+            self.logger.info(traceback.format_exc())
         return False
     
     def clearWorksheet(self, worksheetName, range_):
